@@ -568,6 +568,9 @@
       const problems = (data.analysisResult?.problems || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
       const strengths = (data.analysisResult?.strengths || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
       const solutions = (data.solutions || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+      const positivePrompt = data.positivePrompt || data.optimizedPrompt || "";
+      const negativePrompt = data.negativePrompt || data.recommendedParams?.negativePrompt || "";
+      const combinedPrompt = `正向提示词：\n${positivePrompt}\n\n负向提示词：\n${negativePrompt}`;
 
       wrap.innerHTML = `
         <div class="avatar">🤖</div>
@@ -591,31 +594,35 @@
 
             <div class="card-section">
               <div class="section-title">📝 优化后提示词</div>
-              <div class="prompt-box" data-copy-text="${escapeAttr(data.optimizedPrompt || "")}">
-                ${escapeHtml(data.optimizedPrompt || "未返回优化提示词")}
-                <button class="copy-btn">复制</button>
+              <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px;">
+                <button class="copy-btn copy-all" style="position:static;">复制全部</button>
+              </div>
+              <div class="prompt-box" style="margin-bottom:8px;" data-copy-text="${escapeAttr(positivePrompt)}">
+                <b>正向提示词：</b><br>${escapeHtml(positivePrompt || "未返回正向提示词")}
+              </div>
+              <div class="prompt-box" data-copy-text="${escapeAttr(negativePrompt)}">
+                <b>负向提示词：</b><br>${escapeHtml(negativePrompt || "未返回负向提示词")}
               </div>
             </div>
 
             <div class="card-section">
               <div class="section-title">⚙️ 推荐参数</div>
               <div style="font-size:14px;color:#555;line-height:1.8;">
-                模型版本：${escapeHtml(data.recommendedParams?.model || "通用高质量图像模型")}<br>
+                模型版本：${escapeHtml(data.recommendedParams?.model || "Seedream 4.0")}<br>
                 分辨率/比例：${escapeHtml(data.recommendedParams?.ratio || "1024x1024 / 1:1") }<br>
-                负向提示词：${escapeHtml(data.recommendedParams?.negativePrompt || "text, watermark, low quality")}
+                负向提示词：${escapeHtml(negativePrompt || "text, watermark, low quality")}
               </div>
             </div>
           </div>
         </div>
       `;
 
-      const copyBtn = wrap.querySelector(".copy-btn");
-      copyBtn.addEventListener("click", async () => {
-        const promptBox = wrap.querySelector(".prompt-box");
-        const text = promptBox.getAttribute("data-copy-text") || "";
-        await navigator.clipboard.writeText(text);
-        copyBtn.textContent = "已复制";
-        setTimeout(() => (copyBtn.textContent = "复制"), 1000);
+      const copyAllBtn = wrap.querySelector(".copy-all");
+
+      copyAllBtn.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(combinedPrompt);
+        copyAllBtn.textContent = "已复制";
+        setTimeout(() => (copyAllBtn.textContent = "复制全部"), 1000);
       });
 
       els.messages.appendChild(wrap);

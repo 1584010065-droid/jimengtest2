@@ -8,6 +8,9 @@ function sendJson(res, code, data) {
 }
 
 function fallbackResponse() {
+  const positivePrompt =
+    "保留主体轮廓与关键构图，强化材质描述、光影层次和风格一致性，主体清晰，背景简洁，细节丰富，high detail, cinematic lighting";
+  const negativePrompt = "text, watermark, low quality, blurry, bad anatomy, noisy background";
   return {
     sceneType: "纯文本生成",
     confidence: 68,
@@ -22,12 +25,13 @@ function fallbackResponse() {
       "按 主体 + 场景 + 镜头 + 光影 + 风格 + 质量参数 重写提示词。",
       "加入负向词：text, watermark, low quality, blurry, bad anatomy。",
     ],
-    optimizedPrompt:
-      "主体清晰描述, 环境细节明确, cinematic composition, low-angle shot, rich texture, soft volumetric lighting, color harmony, ultra detailed, 8k",
+    positivePrompt,
+    negativePrompt,
+    optimizedPrompt: `正向提示词：${positivePrompt}\n\n负向提示词：${negativePrompt}`,
     recommendedParams: {
-      model: "高质量图像模型",
+      model: "Seedream 4.0",
       ratio: "1024x1536 / 2:3",
-      negativePrompt: "text, watermark, low quality, blurry, bad anatomy",
+      negativePrompt,
     },
   };
 }
@@ -35,6 +39,9 @@ function fallbackResponse() {
 function normalizeResult(raw) {
   const data = raw && typeof raw === "object" ? raw : {};
   const fallback = fallbackResponse();
+  const positivePrompt = data.positivePrompt || data.optimizedPrompt || fallback.positivePrompt;
+  const negativePrompt =
+    data.negativePrompt || data.recommendedParams?.negativePrompt || fallback.negativePrompt;
   return {
     sceneType: data.sceneType || "纯文本生成",
     confidence: Math.max(1, Math.min(100, Number(data.confidence || 75))),
@@ -49,12 +56,15 @@ function normalizeResult(raw) {
     solutions: Array.isArray(data.solutions)
       ? data.solutions.slice(0, 4)
       : fallback.solutions,
-    optimizedPrompt: data.optimizedPrompt || fallback.optimizedPrompt,
+    positivePrompt,
+    negativePrompt,
+    optimizedPrompt:
+      data.optimizedPrompt ||
+      `正向提示词：${positivePrompt}\n\n负向提示词：${negativePrompt}`,
     recommendedParams: {
-      model: data.recommendedParams?.model || "通用图像模型",
+      model: "Seedream 4.0",
       ratio: data.recommendedParams?.ratio || "1024x1024 / 1:1",
-      negativePrompt:
-        data.recommendedParams?.negativePrompt || "text, watermark, low quality",
+      negativePrompt,
     },
   };
 }
@@ -79,8 +89,10 @@ function getRequestPayload(req) {
 const systemPrompt = [
   "你是专业的AI图像生成优化助手，面向即梦等图像生成平台。",
   "你要做4件事：场景识别、问题分析、方案建议、提示词优化。",
+  "推荐参数里的模型统一输出：Seedream 4.0。",
+  "必须同时输出正向提示词和负向提示词，并且文本开头要明确写'正向提示词：'与'负向提示词：'。",
   "输出必须是JSON，字段严格如下：",
-  '{"sceneType":"风格转绘|主体替换|同风格改编|纯文本生成","confidence":0-100,"analysisResult":{"problems":["..."],"strengths":["..."]},"solutions":["..."],"optimizedPrompt":"...","recommendedParams":{"model":"...","ratio":"...","negativePrompt":"..."}}',
+  '{"sceneType":"风格转绘|主体替换|同风格改编|纯文本生成","confidence":0-100,"analysisResult":{"problems":["..."],"strengths":["..."]},"solutions":["..."],"positivePrompt":"...","negativePrompt":"...","optimizedPrompt":"正向提示词：...\\n\\n负向提示词：...","recommendedParams":{"model":"Seedream 4.0","ratio":"...","negativePrompt":"..."}}',
   "要求：中文输出，problems/strengths/solutions各2-4条，可执行，不空泛。",
 ].join("\n");
 
