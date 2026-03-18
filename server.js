@@ -1,0 +1,255 @@
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const idx = trimmed.indexOf("=");
+    if (idx === -1) continue;
+    const key = trimmed.slice(0, idx).trim();
+    const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadEnvFile(path.join(__dirname, ".env"));
+
+const PORT = Number(process.env.PORT || 8787);
+const API_KEY = process.env.OPENAI_API_KEY || process.env.API_KEY;
+const API_BASE = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const APP_URL = process.env.OPENROUTER_APP_URL || process.env.APP_URL || "http://localhost:8787";
+const APP_NAME = process.env.OPENROUTER_APP_NAME || process.env.APP_NAME || "Image Prompt Optimizer MVP";
+const PROXY_URL =
+  process.env.HTTPS_PROXY ||
+  process.env.HTTP_PROXY ||
+  process.env.ALL_PROXY ||
+  process.env.https_proxy ||
+  process.env.http_proxy ||
+  process.env.all_proxy;
+
+if (PROXY_URL) {
+  // Node.js built-in fetch can honor *_PROXY when NODE_USE_ENV_PROXY=1
+  process.env.NODE_USE_ENV_PROXY = "1";
+}
+
+const htmlPath = path.join(__dirname, "新建 文本文档.html");
+
+const systemPrompt = [
+  "你是专业的AI图像生成优化助手，面向即梦等图像生成平台。",
+  "你要做4件事：场景识别、问题分析、方案建议、提示词优化。",
+  "输出必须是JSON，字段严格如下：",
+  '{"sceneType":"风格转绘|主体替换|同风格改编|纯文本生成","confidence":0-100,"analysisResult":{"problems":["..."],"strengths":["..."]},"solutions":["..."],"optimizedPrompt":"...","recommendedParams":{"model":"...","ratio":"...","negativePrompt":"..."}}',
+  "要求：中文输出，problems/strengths/solutions各2-4条，可执行，不空泛。",
+].join("\n");
+
+function sendJson(res, code, data) {
+  res.writeHead(code, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  });
+  res.end(JSON.stringify(data));
+}
+
+function sendHtml(res) {
+  const html = fs.readFileSync(htmlPath, "utf8");
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(html);
+}
+
+function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 12 * 1024 * 1024) {
+        reject(new Error("请求过大，请压缩图片后再试"));
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (err) {
+        reject(new Error("JSON格式错误"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function fallbackResponse(prompt) {
+  return {
+    sceneType: "纯文本生成",
+    confidence: 68,
+    analysisResult: {
+      problems: [
+        "当前输入缺少明确镜头和构图约束，模型容易随机发挥。",
+        "风格词和材质词可能不够具体，导致质感不稳定。",
+      ],
+      strengths: ["任务目标清晰，主体方向明确。", "可通过补充负向词快速提升稳定性。"],
+    },
+    solutions: [
+      "按 主体 + 场景 + 镜头 + 光影 + 风格 + 质量参数 重写提示词。",
+      "加入负向词：text, watermark, low quality, blurry, bad anatomy。",
+    ],
+    optimizedPrompt:
+      "主体清晰描述, 环境细节明确, cinematic composition, low-angle shot, rich texture, soft volumetric lighting, color harmony, ultra detailed, 8k",
+    recommendedParams: {
+      model: "高质量图像模型",
+      ratio: "1024x1536 / 2:3",
+      negativePrompt: "text, watermark, low quality, blurry, bad anatomy",
+    },
+  };
+}
+
+function normalizeResult(raw, prompt) {
+  const data = raw && typeof raw === "object" ? raw : {};
+  return {
+    sceneType: data.sceneType || "纯文本生成",
+    confidence: Math.max(1, Math.min(100, Number(data.confidence || 75))),
+    analysisResult: {
+      problems: Array.isArray(data.analysisResult?.problems)
+        ? data.analysisResult.problems.slice(0, 4)
+        : fallbackResponse(prompt).analysisResult.problems,
+      strengths: Array.isArray(data.analysisResult?.strengths)
+        ? data.analysisResult.strengths.slice(0, 4)
+        : fallbackResponse(prompt).analysisResult.strengths,
+    },
+    solutions: Array.isArray(data.solutions)
+      ? data.solutions.slice(0, 4)
+      : fallbackResponse(prompt).solutions,
+    optimizedPrompt: data.optimizedPrompt || fallbackResponse(prompt).optimizedPrompt,
+    recommendedParams: {
+      model: data.recommendedParams?.model || "通用图像模型",
+      ratio: data.recommendedParams?.ratio || "1024x1024 / 1:1",
+      negativePrompt:
+        data.recommendedParams?.negativePrompt || "text, watermark, low quality",
+    },
+  };
+}
+
+async function callLLM(payload) {
+  const userContent = [{ type: "text", text: payload.userPrompt || "" }];
+
+  if (payload.referenceImageDataUrl) {
+    userContent.push({
+      type: "text",
+      text: "这是参考图，请用于风格/构图比对。",
+    });
+    userContent.push({
+      type: "image_url",
+      image_url: { url: payload.referenceImageDataUrl },
+    });
+  }
+
+  if (payload.generatedImageDataUrl) {
+    userContent.push({
+      type: "text",
+      text: "这是生成图，是你要重点分析的问题图。",
+    });
+    userContent.push({
+      type: "image_url",
+      image_url: { url: payload.generatedImageDataUrl },
+    });
+  }
+
+  const body = {
+    model: MODEL,
+    temperature: 0.3,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
+    ],
+  };
+
+  const resp = await fetch(`${API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": APP_URL,
+      "X-Title": APP_NAME,
+      "X-OpenRouter-Title": APP_NAME,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`LLM调用失败(${resp.status}) ${text}`);
+  }
+
+  const data = await resp.json();
+  const content = data?.choices?.[0]?.message?.content;
+
+  if (!content) {
+    throw new Error("LLM未返回内容");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (err) {
+    throw new Error("LLM返回非JSON格式");
+  }
+
+  return normalizeResult(parsed, payload.userPrompt);
+}
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
+    sendHtml(res);
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/analyze") {
+    try {
+      const payload = await parseBody(req);
+      if (!payload.userPrompt || !String(payload.userPrompt).trim()) {
+        sendJson(res, 400, { error: "缺少 userPrompt" });
+        return;
+      }
+
+      if (!API_KEY) {
+        sendJson(res, 200, {
+          ...fallbackResponse(payload.userPrompt),
+          _warning: "未检测到 OPENAI_API_KEY，已返回本地降级结果",
+        });
+        return;
+      }
+
+      const result = await callLLM(payload);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: err.message || "服务异常" });
+    }
+    return;
+  }
+
+  sendJson(res, 404, { error: "Not Found" });
+});
+
+server.listen(PORT, () => {
+  console.log(`MVP 服务已启动: http://localhost:${PORT}`);
+  console.log(`模型: ${MODEL}`);
+  console.log(API_KEY ? "API_KEY: 已检测" : "API_KEY: 未检测到（将使用降级分析）");
+});

@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>图像生成效果优化 Bot</title>
+  <style>
+    :root {
+      --bg-color: #f8f8f9;
+      --card-bg: #ffffff;
+      --text-main: #333333;
+      --text-muted: #888888;
+      --primary-color: #f27a33;
+      --border-color: #eaeaea;
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.03);
+      --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.06);
+      --radius-pill: 40px;
+      --radius-card: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      background-color: var(--bg-color);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .logo-small {
+      width: 24px;
+      height: 24px;
+      fill: var(--primary-color);
+    }
+
+    .header-right button {
+      background: none;
+      border: 1px solid var(--border-color);
+      padding: 8px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-main);
+      transition: all 0.2s;
+    }
+
+    .header-right button:hover {
+      background-color: var(--card-bg);
+      box-shadow: var(--shadow-sm);
+    }
+
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 10%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 45vh;
+      gap: 24px;
+    }
+
+    .logo-large {
+      width: 56px;
+      height: 56px;
+      fill: var(--primary-color);
+    }
+
+    .suggestion-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      max-width: 640px;
+    }
+
+    .suggestion-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background-color: var(--card-bg);
+      padding: 14px 20px;
+      border-radius: var(--radius-card);
+      color: var(--text-muted);
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid transparent;
+    }
+
+    .suggestion-item:hover {
+      box-shadow: var(--shadow-md);
+      color: var(--text-main);
+      border-color: rgba(242, 122, 51, 0.2);
+    }
+
+    .message {
+      display: flex;
+      gap: 16px;
+      max-width: 880px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--card-bg);
+      box-shadow: var(--shadow-sm);
+      flex-shrink: 0;
+      font-size: 18px;
+    }
+
+    .message-content {
+      background-color: var(--card-bg);
+      padding: 16px 20px;
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-sm);
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-main);
+      width: 100%;
+      border: 1px solid rgba(0, 0, 0, 0.02);
+    }
+
+    .message.user .message-content {
+      background-color: var(--primary-color);
+      color: white;
+      border-top-right-radius: 4px;
+      width: auto;
+      max-width: min(760px, 85vw);
+      white-space: pre-wrap;
+    }
+
+    .analysis-card {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .scene-tag {
+      display: inline-block;
+      background-color: rgba(242, 122, 51, 0.1);
+      color: var(--primary-color);
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .card-section {
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 16px;
+    }
+
+    .card-section:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .section-title {
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .list {
+      padding-left: 20px;
+      color: #4d4d4d;
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .prompt-box {
+      background-color: #f4f4f5;
+      padding: 14px;
+      border-radius: 10px;
+      font-family: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      position: relative;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .copy-btn:hover {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+
+    .upload-hints {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .hint-chip {
+      background: white;
+      border: 1px solid var(--border-color);
+      border-radius: 999px;
+      padding: 3px 10px;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    footer {
+      padding: 16px 20px 22px;
+      display: flex;
+      justify-content: center;
+      background: linear-gradient(to top, var(--bg-color) 70%, transparent);
+    }
+
+    .footer-wrap {
+      width: 100%;
+      max-width: 880px;
+    }
+
+    .input-container {
+      width: 100%;
+      background-color: var(--card-bg);
+      border-radius: var(--radius-pill);
+      box-shadow: var(--shadow-md);
+      display: flex;
+      align-items: center;
+      padding: 8px 14px;
+      gap: 10px;
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      position: relative;
+    }
+
+    .icon-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      border-radius: 50%;
+      transition: background 0.2s;
+    }
+
+    .icon-btn:hover {
+      background-color: #f0f0f0;
+      color: var(--text-main);
+    }
+
+    #userInput {
+      flex: 1;
+      border: none;
+      outline: none;
+      font-size: 14px;
+      background: transparent;
+      padding: 8px 0;
+      min-width: 0;
+    }
+
+    #userInput::placeholder {
+      color: #b0b0b0;
+    }
+
+    .submit-btn {
+      background-color: #222;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .submit-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .submit-btn:hover:not(:disabled) {
+      opacity: 0.85;
+    }
+
+    .upload-menu {
+      position: absolute;
+      bottom: 52px;
+      left: 8px;
+      background: white;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: var(--shadow-md);
+      padding: 8px;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 9;
+    }
+
+    .upload-menu button {
+      border: 0;
+      background: #f7f7f8;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .upload-menu button:hover {
+      background: #f2ebe7;
+      color: #ca5d1e;
+    }
+
+    .typing {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1024px) {
+      main {
+        padding: 20px 18px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      header {
+        padding: 14px;
+      }
+      .header-left {
+        font-size: 14px;
+      }
+      .header-right button {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+      .message {
+        gap: 10px;
+      }
+      .avatar {
+        width: 30px;
+        height: 30px;
+      }
+      .message-content {
+        padding: 12px 14px;
+      }
+      footer {
+        padding: 12px 10px 16px;
+      }
+      .input-container {
+        padding: 6px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <svg class="logo-small" viewBox="0 0 24 24">
+        <path d="M12 2L9 9H2L7 14L5 22L12 17L19 22L17 14L22 9H15L12 2Z" />
+      </svg>
+      图像生成效果优化 Bot
+    </div>
+    <div class="header-right">
+      <button id="newChatBtn">+ 新对话</button>
+    </div>
+  </header>
+
+  <main id="mainArea">
+    <section class="empty-state" id="emptyState">
+      <svg class="logo-large" viewBox="0 0 24 24">
+        <path d="M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z" />
+      </svg>
+      <div class="suggestion-list" id="suggestionList"></div>
+    </section>
+    <section id="messages"></section>
+  </main>
+
+  <footer>
+    <div class="footer-wrap">
+      <div class="input-container">
+        <button class="icon-btn" id="uploadToggle" title="上传图片">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+            <polyline points="21 15 16 10 5 21"></polyline>
+          </svg>
+        </button>
+
+        <div id="uploadMenu" class="upload-menu">
+          <button id="pickReferenceBtn">上传参考图</button>
+          <button id="pickGeneratedBtn">上传生成图</button>
+        </div>
+
+        <input id="referenceFile" type="file" accept="image/*" hidden />
+        <input id="generatedFile" type="file" accept="image/*" hidden />
+
+        <input id="userInput" type="text" placeholder="输入原始提示词，支持先上传参考图/生成图" />
+
+        <button class="icon-btn" id="presetBtn" title="快速填充">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="4" y1="21" x2="4" y2="14"></line>
+            <line x1="4" y1="10" x2="4" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12" y2="3"></line>
+            <line x1="20" y1="21" x2="20" y2="16"></line>
+            <line x1="20" y1="12" x2="20" y2="3"></line>
+            <line x1="1" y1="14" x2="7" y2="14"></line>
+            <line x1="9" y1="8" x2="15" y2="8"></line>
+            <line x1="17" y1="16" x2="23" y2="16"></line>
+          </svg>
+        </button>
+
+        <button class="submit-btn" id="sendBtn" title="发送">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="19" x2="12" y2="5"></line>
+            <polyline points="5 12 12 5 19 12"></polyline>
+          </svg>
+        </button>
+      </div>
+      <div class="upload-hints">
+        <span class="hint-chip" id="referenceHint">参考图：未上传</span>
+        <span class="hint-chip" id="generatedHint">生成图：未上传（可仅文本测试）</span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const suggestions = [
+      {
+        icon: "🎨",
+        text: "风格转绘：将抖音图标材质变为糖果材质，保留轮廓",
+      },
+      {
+        icon: "🔄",
+        text: "主体替换：保留草地漫画风，把猫替换成白衬衫男孩和羊群",
+      },
+      {
+        icon: "🪄",
+        text: "同风格改编：参考东京海报生成上海主题同款海报",
+      },
+    ];
+
+    const els = {
+      mainArea: document.getElementById("mainArea"),
+      emptyState: document.getElementById("emptyState"),
+      messages: document.getElementById("messages"),
+      suggestionList: document.getElementById("suggestionList"),
+      newChatBtn: document.getElementById("newChatBtn"),
+      userInput: document.getElementById("userInput"),
+      sendBtn: document.getElementById("sendBtn"),
+      uploadToggle: document.getElementById("uploadToggle"),
+      uploadMenu: document.getElementById("uploadMenu"),
+      pickReferenceBtn: document.getElementById("pickReferenceBtn"),
+      pickGeneratedBtn: document.getElementById("pickGeneratedBtn"),
+      referenceFile: document.getElementById("referenceFile"),
+      generatedFile: document.getElementById("generatedFile"),
+      referenceHint: document.getElementById("referenceHint"),
+      generatedHint: document.getElementById("generatedHint"),
+      presetBtn: document.getElementById("presetBtn"),
+    };
+
+    const state = {
+      isLoading: false,
+      referenceImage: null,
+      generatedImage: null,
+    };
+
+    function renderSuggestions() {
+      els.suggestionList.innerHTML = "";
+      suggestions.forEach((item) => {
+        const div = document.createElement("div");
+        div.className = "suggestion-item";
+        div.innerHTML = `<span>${item.icon}</span>${item.text}`;
+        div.addEventListener("click", () => {
+          els.userInput.value = item.text;
+          sendMessage();
+        });
+        els.suggestionList.appendChild(div);
+      });
+    }
+
+    function updateEmptyState() {
+      const hasMessages = els.messages.children.length > 0;
+      els.emptyState.style.display = hasMessages ? "none" : "flex";
+    }
+
+    function addTextMessage(role, text) {
+      const wrap = document.createElement("div");
+      wrap.className = `message ${role}`;
+      wrap.innerHTML = `
+        <div class="avatar">${role === "user" ? "👤" : "🤖"}</div>
+        <div class="message-content">${escapeHtml(text).replace(/\n/g, "<br>")}</div>
+      `;
+      els.messages.appendChild(wrap);
+      updateEmptyState();
+      scrollToBottom();
+      return wrap;
+    }
+
+    function addAnalysisMessage(data) {
+      const wrap = document.createElement("div");
+      wrap.className = "message bot";
+
+      const problems = (data.analysisResult?.problems || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+      const strengths = (data.analysisResult?.strengths || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+      const solutions = (data.solutions || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+
+      wrap.innerHTML = `
+        <div class="avatar">🤖</div>
+        <div class="message-content">
+          <div class="analysis-card">
+            <div class="card-section">
+              <span class="scene-tag">${escapeHtml(data.sceneType || "场景待确认")}（置信度：${escapeHtml(String(data.confidence || 80))}%）</span>
+            </div>
+
+            <div class="card-section">
+              <div class="section-title">📊 分析结果</div>
+              <ul class="list">${problems || "<li>未检测到明显问题，建议通过更精确提示词继续提升细节。</li>"}</ul>
+              <div class="section-title" style="margin-top:10px;">优点</div>
+              <ul class="list">${strengths || "<li>整体画面方向正确，可继续优化构图和质感细节。</li>"}</ul>
+            </div>
+
+            <div class="card-section">
+              <div class="section-title">💡 解决方案</div>
+              <ul class="list">${solutions || "<li>建议强化主体与镜头描述，并补充负向提示词。</li>"}</ul>
+            </div>
+
+            <div class="card-section">
+              <div class="section-title">📝 优化后提示词</div>
+              <div class="prompt-box" data-copy-text="${escapeAttr(data.optimizedPrompt || "")}">
+                ${escapeHtml(data.optimizedPrompt || "未返回优化提示词")}
+                <button class="copy-btn">复制</button>
+              </div>
+            </div>
+
+            <div class="card-section">
+              <div class="section-title">⚙️ 推荐参数</div>
+              <div style="font-size:14px;color:#555;line-height:1.8;">
+                模型版本：${escapeHtml(data.recommendedParams?.model || "通用高质量图像模型")}<br>
+                分辨率/比例：${escapeHtml(data.recommendedParams?.ratio || "1024x1024 / 1:1") }<br>
+                负向提示词：${escapeHtml(data.recommendedParams?.negativePrompt || "text, watermark, low quality")}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const copyBtn = wrap.querySelector(".copy-btn");
+      copyBtn.addEventListener("click", async () => {
+        const promptBox = wrap.querySelector(".prompt-box");
+        const text = promptBox.getAttribute("data-copy-text") || "";
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent = "已复制";
+        setTimeout(() => (copyBtn.textContent = "复制"), 1000);
+      });
+
+      els.messages.appendChild(wrap);
+      updateEmptyState();
+      scrollToBottom();
+      return wrap;
+    }
+
+    function addTyping() {
+      const wrap = document.createElement("div");
+      wrap.className = "message bot";
+      wrap.innerHTML = `
+        <div class="avatar">🤖</div>
+        <div class="message-content typing">正在分析图像与提示词，请稍候...</div>
+      `;
+      els.messages.appendChild(wrap);
+      scrollToBottom();
+      return wrap;
+    }
+
+    function setLoading(v) {
+      state.isLoading = v;
+      els.sendBtn.disabled = v;
+      els.userInput.disabled = v;
+    }
+
+    async function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function refreshHints() {
+      els.referenceHint.textContent = state.referenceImage
+        ? `参考图：${state.referenceImage.name}`
+        : "参考图：未上传";
+      els.generatedHint.textContent = state.generatedImage
+        ? `生成图：${state.generatedImage.name}`
+        : "生成图：未上传（可仅文本测试）";
+    }
+
+    async function sendMessage() {
+      if (state.isLoading) return;
+      const text = els.userInput.value.trim();
+      if (!text) {
+        alert("请先输入提示词或需求描述");
+        return;
+      }
+
+      addTextMessage("user", text);
+      els.userInput.value = "";
+      setLoading(true);
+      const typingNode = addTyping();
+
+      try {
+        const payload = {
+          userPrompt: text,
+          referenceImageDataUrl: state.referenceImage ? state.referenceImage.dataUrl : null,
+          generatedImageDataUrl: state.generatedImage ? state.generatedImage.dataUrl : null,
+        };
+
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          throw new Error("API请求失败：" + res.status);
+        }
+
+        const data = await res.json();
+        typingNode.remove();
+        addAnalysisMessage(data);
+      } catch (err) {
+        typingNode.remove();
+        addTextMessage(
+          "bot",
+          "分析失败，已降级为本地建议。你可以继续问我，我会先用规则给出可执行优化方向。\n\n"
+          + "建议：明确主体、镜头、风格、光影和负向词；如果有参考图/生成图请上传后重试。"
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function clearChat() {
+      els.messages.innerHTML = "";
+      updateEmptyState();
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function escapeAttr(str) {
+      return escapeHtml(str).replace(/\n/g, "&#10;");
+    }
+
+    function scrollToBottom() {
+      requestAnimationFrame(() => {
+        els.mainArea.scrollTop = els.mainArea.scrollHeight;
+      });
+    }
+
+    els.sendBtn.addEventListener("click", sendMessage);
+    els.userInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendMessage();
+    });
+    els.newChatBtn.addEventListener("click", clearChat);
+
+    els.uploadToggle.addEventListener("click", () => {
+      const visible = els.uploadMenu.style.display === "flex";
+      els.uploadMenu.style.display = visible ? "none" : "flex";
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!els.uploadMenu.contains(e.target) && !els.uploadToggle.contains(e.target)) {
+        els.uploadMenu.style.display = "none";
+      }
+    });
+
+    els.pickReferenceBtn.addEventListener("click", () => {
+      els.uploadMenu.style.display = "none";
+      els.referenceFile.click();
+    });
+
+    els.pickGeneratedBtn.addEventListener("click", () => {
+      els.uploadMenu.style.display = "none";
+      els.generatedFile.click();
+    });
+
+    els.referenceFile.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      state.referenceImage = {
+        name: file.name,
+        dataUrl: await fileToDataURL(file),
+      };
+      refreshHints();
+    });
+
+    els.generatedFile.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      state.generatedImage = {
+        name: file.name,
+        dataUrl: await fileToDataURL(file),
+      };
+      refreshHints();
+    });
+
+    els.presetBtn.addEventListener("click", () => {
+      const demo = "请分析：参考图是东京主题海报，生成图是上海海报。要求保持同款构图和霓虹氛围，但当前东方明珠不够突出。";
+      els.userInput.value = demo;
+      els.userInput.focus();
+    });
+
+    renderSuggestions();
+    refreshHints();
+    updateEmptyState();
+  </script>
+</body>
+</html>
