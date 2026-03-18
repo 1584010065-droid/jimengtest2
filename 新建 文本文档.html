@@ -590,7 +590,7 @@
         div.innerHTML = `<span>${item.icon}</span>${item.text}`;
         div.addEventListener("click", () => {
           els.userInput.value = item.text;
-          sendMessage();
+          els.userInput.focus();
         });
         els.suggestionList.appendChild(div);
       });
