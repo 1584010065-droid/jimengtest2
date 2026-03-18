@@ -242,20 +242,48 @@
       color: var(--primary-color);
     }
 
-    .upload-hints {
+    .upload-preview-strip {
       display: flex;
-      gap: 8px;
-      margin-top: 4px;
-      color: var(--text-muted);
-      font-size: 12px;
+      gap: 10px;
+      margin-bottom: 10px;
     }
 
-    .hint-chip {
+    .upload-thumb-card {
       background: white;
       border: 1px solid var(--border-color);
-      border-radius: 999px;
-      padding: 3px 10px;
-      max-width: 200px;
+      border-radius: 14px;
+      padding: 8px;
+      width: 220px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .upload-thumb {
+      width: 52px;
+      height: 52px;
+      border-radius: 10px;
+      object-fit: cover;
+      background: #f1f1f2;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      flex-shrink: 0;
+    }
+
+    .upload-thumb-meta {
+      min-width: 0;
+    }
+
+    .upload-thumb-title {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 2px;
+    }
+
+    .upload-thumb-name {
+      font-size: 13px;
+      color: #222;
+      font-weight: 500;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -409,6 +437,13 @@
       .input-container {
         padding: 6px 10px;
       }
+      .upload-preview-strip {
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+      .upload-thumb-card {
+        min-width: 210px;
+      }
     }
   </style>
 </head>
@@ -437,6 +472,22 @@
 
   <footer>
     <div class="footer-wrap">
+      <div class="upload-preview-strip">
+        <div class="upload-thumb-card" id="referenceCard">
+          <img class="upload-thumb" id="referenceThumb" alt="参考图缩略图" src="" />
+          <div class="upload-thumb-meta">
+            <div class="upload-thumb-title">参考图</div>
+            <div class="upload-thumb-name" id="referenceHint">未上传</div>
+          </div>
+        </div>
+        <div class="upload-thumb-card" id="generatedCard">
+          <img class="upload-thumb" id="generatedThumb" alt="生成图缩略图" src="" />
+          <div class="upload-thumb-meta">
+            <div class="upload-thumb-title">生成图</div>
+            <div class="upload-thumb-name" id="generatedHint">未上传（可仅文本测试）</div>
+          </div>
+        </div>
+      </div>
       <div class="input-container">
         <button class="icon-btn" id="uploadToggle" title="上传图片">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -477,10 +528,6 @@
           </svg>
         </button>
       </div>
-      <div class="upload-hints">
-        <span class="hint-chip" id="referenceHint">参考图：未上传</span>
-        <span class="hint-chip" id="generatedHint">生成图：未上传（可仅文本测试）</span>
-      </div>
     </div>
   </footer>
 
@@ -516,6 +563,8 @@
       generatedFile: document.getElementById("generatedFile"),
       referenceHint: document.getElementById("referenceHint"),
       generatedHint: document.getElementById("generatedHint"),
+      referenceThumb: document.getElementById("referenceThumb"),
+      generatedThumb: document.getElementById("generatedThumb"),
       presetBtn: document.getElementById("presetBtn"),
     };
 
@@ -523,11 +572,15 @@
       isLoading: false,
       referenceImage: null,
       generatedImage: null,
+      referenceUploading: false,
+      generatedUploading: false,
     };
     let CLOUDINARY_CONFIG = {
       cloudName: "dhqbnjx8p",
       uploadPreset: "unsigned_preset_v1",
     };
+    const EMPTY_THUMB =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='100%25' height='100%25' fill='%23f1f1f2'/%3E%3Cpath d='M22 52l11-11 8 8 13-13 8 8v10H22z' fill='%23c9c9cc'/%3E%3Ccircle cx='34' cy='30' r='5' fill='%23b8b8bc'/%3E%3C/svg%3E";
 
     function renderSuggestions() {
       els.suggestionList.innerHTML = "";
@@ -696,12 +749,24 @@
     }
 
     function refreshHints() {
-      els.referenceHint.textContent = state.referenceImage
-        ? `参考图：${state.referenceImage.name} · ${state.referenceImage.sizeLabel} · 已上传`
-        : "参考图：未上传";
-      els.generatedHint.textContent = state.generatedImage
-        ? `生成图：${state.generatedImage.name} · ${state.generatedImage.sizeLabel} · 已上传`
-        : "生成图：未上传（可仅文本测试）";
+      if (state.referenceUploading) {
+        els.referenceHint.textContent = "上传中...";
+      } else if (state.referenceImage) {
+        els.referenceHint.textContent = `${state.referenceImage.name} · ${state.referenceImage.sizeLabel}`;
+      } else {
+        els.referenceHint.textContent = "未上传";
+      }
+
+      if (state.generatedUploading) {
+        els.generatedHint.textContent = "上传中...";
+      } else if (state.generatedImage) {
+        els.generatedHint.textContent = `${state.generatedImage.name} · ${state.generatedImage.sizeLabel}`;
+      } else {
+        els.generatedHint.textContent = "未上传（可仅文本测试）";
+      }
+
+      els.referenceThumb.src = state.referenceImage?.previewUrl || EMPTY_THUMB;
+      els.generatedThumb.src = state.generatedImage?.previewUrl || EMPTY_THUMB;
     }
 
     async function sendMessage() {
@@ -803,18 +868,33 @@
     els.referenceFile.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      els.referenceHint.textContent = "参考图：上传中...";
+      if (state.referenceImage?.previewUrl && state.referenceImage.previewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(state.referenceImage.previewUrl);
+      }
+      const previewUrl = URL.createObjectURL(file);
+      state.referenceUploading = true;
+      state.referenceImage = {
+        name: file.name,
+        previewUrl,
+        sizeLabel: formatBytes(file.size),
+      };
+      refreshHints();
       try {
         const imageUrl = await uploadToCloudinary(file);
         state.referenceImage = {
           name: file.name,
           url: imageUrl,
+          previewUrl,
           sizeLabel: formatBytes(file.size),
         };
       } catch (err) {
+        if (previewUrl && previewUrl.startsWith("blob:")) {
+          URL.revokeObjectURL(previewUrl);
+        }
         alert(`参考图上传失败：${err.message || err}`);
         state.referenceImage = null;
       } finally {
+        state.referenceUploading = false;
         refreshHints();
       }
     });
@@ -822,18 +902,33 @@
     els.generatedFile.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      els.generatedHint.textContent = "生成图：上传中...";
+      if (state.generatedImage?.previewUrl && state.generatedImage.previewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(state.generatedImage.previewUrl);
+      }
+      const previewUrl = URL.createObjectURL(file);
+      state.generatedUploading = true;
+      state.generatedImage = {
+        name: file.name,
+        previewUrl,
+        sizeLabel: formatBytes(file.size),
+      };
+      refreshHints();
       try {
         const imageUrl = await uploadToCloudinary(file);
         state.generatedImage = {
           name: file.name,
           url: imageUrl,
+          previewUrl,
           sizeLabel: formatBytes(file.size),
         };
       } catch (err) {
+        if (previewUrl && previewUrl.startsWith("blob:")) {
+          URL.revokeObjectURL(previewUrl);
+        }
         alert(`生成图上传失败：${err.message || err}`);
         state.generatedImage = null;
       } finally {
+        state.generatedUploading = false;
         refreshHints();
       }
     });
