@@ -7,11 +7,39 @@ function sendJson(res, code, data) {
   res.end(JSON.stringify(data));
 }
 
+const PRODUCT_SCENE_TYPES = new Set(["风格转绘", "主体替换", "同风格改编", "纯文本生成"]);
+
+function mapRouteToSceneType(sceneRoute, fallback = "纯文本生成") {
+  const route = String(sceneRoute || "").trim();
+  if (route.includes("风格与材质转绘")) return "风格转绘";
+  if (route.includes("结构与版式保留")) return "同风格改编";
+  if (route.includes("主体替换与背景融合")) return "主体替换";
+  if (route.includes("局部编辑与重绘")) return "主体替换";
+  if (route.includes("概念参考与延展")) return "同风格改编";
+  return fallback;
+}
+
+function normalizeSceneType(rawSceneType, rawSceneRoute) {
+  const sceneType = String(rawSceneType || "").trim();
+  if (PRODUCT_SCENE_TYPES.has(sceneType)) return sceneType;
+
+  // Backward compatibility for common aliases or route-like outputs.
+  if (sceneType.includes("风格与材质转绘")) return "风格转绘";
+  if (sceneType.includes("结构与版式保留")) return "同风格改编";
+  if (sceneType.includes("主体替换与背景融合")) return "主体替换";
+  if (sceneType.includes("局部编辑与重绘")) return "主体替换";
+  if (sceneType.includes("概念参考与延展")) return "同风格改编";
+  if (sceneType.includes("纯文本")) return "纯文本生成";
+
+  return mapRouteToSceneType(rawSceneRoute, "纯文本生成");
+}
+
 function fallbackResponse() {
   const positivePrompt =
     "保留主体轮廓与关键构图，强化材质描述、光影层次和风格一致性，主体清晰，背景简洁，细节丰富，high detail, cinematic lighting";
   const negativePrompt = "text, watermark, low quality, blurry, bad anatomy, noisy background";
   return {
+    sceneRoute: "5. 概念参考与延展",
     sceneType: "纯文本生成",
     confidence: 68,
     analysisResult: {
@@ -39,11 +67,14 @@ function fallbackResponse() {
 function normalizeResult(raw) {
   const data = raw && typeof raw === "object" ? raw : {};
   const fallback = fallbackResponse();
+  const sceneRoute = String(data.sceneRoute || data.taskRoute || data.task_route || "").trim();
+  const sceneType = normalizeSceneType(data.sceneType, sceneRoute);
   const positivePrompt = data.positivePrompt || data.optimizedPrompt || fallback.positivePrompt;
   const negativePrompt =
     data.negativePrompt || data.recommendedParams?.negativePrompt || fallback.negativePrompt;
   return {
-    sceneType: data.sceneType || "纯文本生成",
+    sceneRoute: sceneRoute || fallback.sceneRoute,
+    sceneType,
     confidence: Math.max(1, Math.min(100, Number(data.confidence || 75))),
     analysisResult: {
       problems: Array.isArray(data.analysisResult?.problems)
@@ -100,9 +131,13 @@ const systemPrompt = [
   "【分析协议（必须内化执行）】",
   "Step1 视觉资产剥离：识别不可变特征（构图、透视、版式）与可变特征（主体、地标、国家符号、文案语义、材质、氛围、细节）。",
   "Step1.5 语义替换映射：先建立三类清单（保留项/替换项/禁用项），优先遵循用户目标主题；若用户指定目标城市或国家，源主题的地标、国旗符号、国家文案必须进入替换项或禁用项，除非用户明确要求保留。",
+  "Step1.6 符号归因去耦：对关键视觉元素逐项标注[形态Form/视觉功能Function/文化身份Identity]。跨主题时只允许继承Form与Function，不继承Identity。",
+  "Step1.7 功能等价重表达：若某元素承担的是构图锚点、视觉重心、情绪光源等功能，必须用目标主题中性描述重写该功能，而非沿用源主题文化叙事词。",
+  "Step1.8 主题一致性矩阵：抽取用户明确目标主题（城市/国家/文化主题）并建立Theme=Target；同时列出参考图源主题Source。后续生成与审查都必须以Target为主轴。",
   "Step2 缺陷与物理限制诊断：指出当前生成失败根因，并预判常见崩溃风险（脸部坍塌、结构畸变、文字乱码、排版混乱、多主体混淆、主题残留污染等）。",
   "Step3 降噪与显性化重构：把模糊意图改写为可执行描述，并将隐性关键特征显性化（镜头、角度、层级、材质、光色、版式约束）。",
   "Step4 输出前一致性自检：逐项检查positivePrompt是否残留源主题语义符号；若与目标主题冲突，必须重写直到冲突消失。",
+  "Step4.5 主题冲突审查：允许出现文化来源描述词，但必须审查是否与Target主题冲突；若输出同时出现互斥主题身份元素（地标、国别文案、国家象征），必须重写。",
   "",
   "【提示词工程规则】",
   "正向提示词结构：画质/媒介 + 主体精确描述 + 环境背景 + 构图镜头 + 光影色彩 + 版式/文字约束（如有）。",
@@ -110,6 +145,8 @@ const systemPrompt = [
   "负向提示词必须针对风险收敛，避免泛泛而谈。",
   "当任务是同风格改编/跨城市改编时，只继承风格层（构图、色调、颗粒、排版节奏、镜头语言），不得继承源主题身份层（国家符号、源地标、源城市文案）。",
   "若用户显式指定目标主题A，提示词中所有身份元素必须指向A；不得同时出现A与源主题B的冲突身份符号。",
+  "描述视觉符号时可使用文化来源词，但必须保证文化来源词服务于Target主题，不得引入与Target冲突的第二主题。",
+  "若参考图中的高显著符号同时具备文化身份与构图功能，必须保留其构图功能、重写其语义身份，并在solutions中明确该重写逻辑。",
   "",
   "【文字与排版硬约束】",
   "当生成图包含文字时，必须避免乱码、错字、断裂字、重影字、不可读字。",
@@ -121,10 +158,14 @@ const systemPrompt = [
   "推荐参数里的模型统一输出：Seedream 4.0。",
   "必须同时输出正向提示词和负向提示词，并在optimizedPrompt开头明确写'正向提示词：'与'负向提示词：'。",
   "solutions中至少1条必须体现保留项/替换项/禁用项的映射结论，明确写出替换了什么、禁用了什么。",
+  "若用户输入包含明确文化主题，solutions中至少1条必须给出'目标主题一致性检查结果'（是否检测到异主题残留，以及如何清除）。",
+  "当遇到符号归因歧义（例如圆盘既像光源又可能被解读为国家符号）时，必须在solutions中先声明采用'功能优先、身份去耦'策略，再给出可执行改写。",
   "当存在跨主题改编时，negativePrompt必须包含源主题残留抑制词（例如 source city landmarks, national flag symbol, wrong city text, mixed cultural symbols）。",
   "只输出中文分析与建议。",
+  "你必须先输出sceneRoute（5类精细路由），再输出sceneType（4类产品标签）。sceneType必须由sceneRoute映射得到，不可自造标签。",
+  "映射规则：1风格与材质转绘->风格转绘；2结构与版式保留->同风格改编；3主体替换与背景融合->主体替换；4局部编辑与重绘->主体替换；5概念参考与延展->同风格改编（无参考图时可用纯文本生成）。",
   "输出必须是JSON，字段严格如下：",
-  '{"sceneType":"风格转绘|主体替换|同风格改编|纯文本生成","confidence":0-100,"analysisResult":{"problems":["..."],"strengths":["..."]},"solutions":["..."],"positivePrompt":"...","negativePrompt":"...","optimizedPrompt":"正向提示词：...\\n\\n负向提示词：...","recommendedParams":{"model":"Seedream 4.0","ratio":"...","negativePrompt":"..."}}',
+  '{"sceneRoute":"1.风格与材质转绘|2.结构与版式保留|3.主体替换与背景融合|4.局部编辑与重绘|5.概念参考与延展","sceneType":"风格转绘|主体替换|同风格改编|纯文本生成","confidence":0-100,"analysisResult":{"problems":["..."],"strengths":["..."]},"solutions":["..."],"positivePrompt":"...","negativePrompt":"...","optimizedPrompt":"正向提示词：...\\n\\n负向提示词：...","recommendedParams":{"model":"Seedream 4.0","ratio":"...","negativePrompt":"..."}}',
   "要求：中文输出，problems/strengths/solutions各2-4条，可执行，不空泛。",
 ].join("\n");
 
