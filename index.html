@@ -524,9 +524,9 @@
       referenceImage: null,
       generatedImage: null,
     };
-    const UPLOAD_CONFIG = {
-      maxSide: 1400,
-      jpegQuality: 0.8,
+    let CLOUDINARY_CONFIG = {
+      cloudName: "dhqbnjx8p",
+      uploadPreset: "unsigned_preset_v1",
     };
 
     function renderSuggestions() {
@@ -649,78 +649,58 @@
       els.userInput.disabled = v;
     }
 
-    async function fileToDataURL(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    }
-
-    function estimateDataUrlBytes(dataUrl) {
-      const base64 = String(dataUrl || "").split(",")[1] || "";
-      return Math.floor((base64.length * 3) / 4);
-    }
-
     function formatBytes(bytes) {
       if (!bytes || bytes <= 0) return "0KB";
       if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
       return `${Math.round(bytes / 1024)}KB`;
     }
 
-    async function compressImageToDataURL(file) {
+    async function uploadToCloudinary(file) {
       if (!file || !file.type || !file.type.startsWith("image/")) {
-        const rawDataUrl = await fileToDataURL(file);
-        return { dataUrl: rawDataUrl, compressed: false };
+        throw new Error("请选择图片文件");
       }
 
+      const cloudName = CLOUDINARY_CONFIG.cloudName;
+      const uploadPreset = CLOUDINARY_CONFIG.uploadPreset;
+      if (!cloudName || !uploadPreset) {
+        throw new Error("Cloudinary配置缺失，请检查 cloudName / uploadPreset");
+      }
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("upload_preset", uploadPreset);
+      const url = `https://api.cloudinary.com/v1_1/${cloudName}/upload`;
+
+      const res = await fetch(url, { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error?.message || "Cloudinary上传失败");
+      }
+      return data.secure_url;
+    }
+
+    async function loadCloudinaryConfig() {
       try {
-        const objectUrl = URL.createObjectURL(file);
-        const img = await new Promise((resolve, reject) => {
-          const image = new Image();
-          image.onload = () => resolve(image);
-          image.onerror = reject;
-          image.src = objectUrl;
-        });
-
-        const maxSide = UPLOAD_CONFIG.maxSide;
-        const longest = Math.max(img.width, img.height);
-        const ratio = longest > maxSide ? maxSide / longest : 1;
-        const targetW = Math.max(1, Math.round(img.width * ratio));
-        const targetH = Math.max(1, Math.round(img.height * ratio));
-
-        const canvas = document.createElement("canvas");
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, targetW, targetH);
-
-        const blob = await new Promise((resolve) =>
-          canvas.toBlob(resolve, "image/jpeg", UPLOAD_CONFIG.jpegQuality)
-        );
-        URL.revokeObjectURL(objectUrl);
-
-        if (!blob) {
-          const rawDataUrl = await fileToDataURL(file);
-          return { dataUrl: rawDataUrl, compressed: false };
+        const res = await fetch("/api/config");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.cloudName && data?.uploadPreset) {
+          CLOUDINARY_CONFIG = {
+            cloudName: data.cloudName,
+            uploadPreset: data.uploadPreset,
+          };
         }
-
-        const dataUrl = await fileToDataURL(blob);
-        const compressed = blob.size < file.size || ratio < 1;
-        return { dataUrl, compressed };
       } catch {
-        const rawDataUrl = await fileToDataURL(file);
-        return { dataUrl: rawDataUrl, compressed: false };
+        // use local fallback values in CLOUDINARY_CONFIG
       }
     }
 
     function refreshHints() {
       els.referenceHint.textContent = state.referenceImage
-        ? `参考图：${state.referenceImage.name} · ${state.referenceImage.sizeLabel}${state.referenceImage.compressed ? " · 已压缩" : ""}`
+        ? `参考图：${state.referenceImage.name} · ${state.referenceImage.sizeLabel} · 已上传`
         : "参考图：未上传";
       els.generatedHint.textContent = state.generatedImage
-        ? `生成图：${state.generatedImage.name} · ${state.generatedImage.sizeLabel}${state.generatedImage.compressed ? " · 已压缩" : ""}`
+        ? `生成图：${state.generatedImage.name} · ${state.generatedImage.sizeLabel} · 已上传`
         : "生成图：未上传（可仅文本测试）";
     }
 
@@ -740,8 +720,8 @@
       try {
         const payload = {
           userPrompt: text,
-          referenceImageDataUrl: state.referenceImage ? state.referenceImage.dataUrl : null,
-          generatedImageDataUrl: state.generatedImage ? state.generatedImage.dataUrl : null,
+          referenceImageUrl: state.referenceImage ? state.referenceImage.url : null,
+          generatedImageUrl: state.generatedImage ? state.generatedImage.url : null,
         };
 
         const res = await fetch("/api/analyze", {
@@ -823,27 +803,39 @@
     els.referenceFile.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      const { dataUrl, compressed } = await compressImageToDataURL(file);
-      state.referenceImage = {
-        name: file.name,
-        dataUrl,
-        compressed,
-        sizeLabel: formatBytes(estimateDataUrlBytes(dataUrl)),
-      };
-      refreshHints();
+      els.referenceHint.textContent = "参考图：上传中...";
+      try {
+        const imageUrl = await uploadToCloudinary(file);
+        state.referenceImage = {
+          name: file.name,
+          url: imageUrl,
+          sizeLabel: formatBytes(file.size),
+        };
+      } catch (err) {
+        alert(`参考图上传失败：${err.message || err}`);
+        state.referenceImage = null;
+      } finally {
+        refreshHints();
+      }
     });
 
     els.generatedFile.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      const { dataUrl, compressed } = await compressImageToDataURL(file);
-      state.generatedImage = {
-        name: file.name,
-        dataUrl,
-        compressed,
-        sizeLabel: formatBytes(estimateDataUrlBytes(dataUrl)),
-      };
-      refreshHints();
+      els.generatedHint.textContent = "生成图：上传中...";
+      try {
+        const imageUrl = await uploadToCloudinary(file);
+        state.generatedImage = {
+          name: file.name,
+          url: imageUrl,
+          sizeLabel: formatBytes(file.size),
+        };
+      } catch (err) {
+        alert(`生成图上传失败：${err.message || err}`);
+        state.generatedImage = null;
+      } finally {
+        refreshHints();
+      }
     });
 
     els.presetBtn.addEventListener("click", () => {
@@ -855,6 +847,7 @@
     renderSuggestions();
     refreshHints();
     updateEmptyState();
+    loadCloudinaryConfig();
   </script>
 </body>
 </html>

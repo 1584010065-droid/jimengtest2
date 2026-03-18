@@ -135,19 +135,22 @@ module.exports = async function handler(req, res) {
   try {
     const userContent = [{ type: "text", text: userPrompt }];
 
-    if (payload.referenceImageDataUrl) {
+    const referenceImageInput = payload.referenceImageUrl || payload.referenceImageDataUrl;
+    const generatedImageInput = payload.generatedImageUrl || payload.generatedImageDataUrl;
+
+    if (referenceImageInput) {
       userContent.push({ type: "text", text: "这是参考图，请用于风格/构图比对。" });
       userContent.push({
         type: "image_url",
-        image_url: { url: payload.referenceImageDataUrl },
+        image_url: { url: referenceImageInput },
       });
     }
 
-    if (payload.generatedImageDataUrl) {
+    if (generatedImageInput) {
       userContent.push({ type: "text", text: "这是生成图，是你要重点分析的问题图。" });
       userContent.push({
         type: "image_url",
-        image_url: { url: payload.generatedImageDataUrl },
+        image_url: { url: generatedImageInput },
       });
     }
 

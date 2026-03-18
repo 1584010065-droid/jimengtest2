@@ -524,6 +524,10 @@
       referenceImage: null,
       generatedImage: null,
     };
+    let CLOUDINARY_CONFIG = {
+      cloudName: "dhqbnjx8p",
+      uploadPreset: "unsigned_preset_v1",
+    };
 
     function renderSuggestions() {
       els.suggestionList.innerHTML = "";
@@ -564,6 +568,9 @@
       const problems = (data.analysisResult?.problems || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
       const strengths = (data.analysisResult?.strengths || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
       const solutions = (data.solutions || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+      const positivePrompt = data.positivePrompt || data.optimizedPrompt || "";
+      const negativePrompt = data.negativePrompt || data.recommendedParams?.negativePrompt || "";
+      const combinedPrompt = `正向提示词：\n${positivePrompt}\n\n负向提示词：\n${negativePrompt}`;
 
       wrap.innerHTML = `
         <div class="avatar">🤖</div>
@@ -587,31 +594,35 @@
 
             <div class="card-section">
               <div class="section-title">📝 优化后提示词</div>
-              <div class="prompt-box" data-copy-text="${escapeAttr(data.optimizedPrompt || "")}">
-                ${escapeHtml(data.optimizedPrompt || "未返回优化提示词")}
-                <button class="copy-btn">复制</button>
+              <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:8px;">
+                <button class="copy-btn copy-all" style="position:static;">复制全部</button>
+              </div>
+              <div class="prompt-box" style="margin-bottom:8px;" data-copy-text="${escapeAttr(positivePrompt)}">
+                <b>正向提示词：</b><br>${escapeHtml(positivePrompt || "未返回正向提示词")}
+              </div>
+              <div class="prompt-box" data-copy-text="${escapeAttr(negativePrompt)}">
+                <b>负向提示词：</b><br>${escapeHtml(negativePrompt || "未返回负向提示词")}
               </div>
             </div>
 
             <div class="card-section">
               <div class="section-title">⚙️ 推荐参数</div>
               <div style="font-size:14px;color:#555;line-height:1.8;">
-                模型版本：${escapeHtml(data.recommendedParams?.model || "通用高质量图像模型")}<br>
+                模型版本：${escapeHtml(data.recommendedParams?.model || "Seedream 4.0")}<br>
                 分辨率/比例：${escapeHtml(data.recommendedParams?.ratio || "1024x1024 / 1:1") }<br>
-                负向提示词：${escapeHtml(data.recommendedParams?.negativePrompt || "text, watermark, low quality")}
+                负向提示词：${escapeHtml(negativePrompt || "text, watermark, low quality")}
               </div>
             </div>
           </div>
         </div>
       `;
 
-      const copyBtn = wrap.querySelector(".copy-btn");
-      copyBtn.addEventListener("click", async () => {
-        const promptBox = wrap.querySelector(".prompt-box");
-        const text = promptBox.getAttribute("data-copy-text") || "";
-        await navigator.clipboard.writeText(text);
-        copyBtn.textContent = "已复制";
-        setTimeout(() => (copyBtn.textContent = "复制"), 1000);
+      const copyAllBtn = wrap.querySelector(".copy-all");
+
+      copyAllBtn.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(combinedPrompt);
+        copyAllBtn.textContent = "已复制";
+        setTimeout(() => (copyAllBtn.textContent = "复制全部"), 1000);
       });
 
       els.messages.appendChild(wrap);
@@ -638,21 +649,58 @@
       els.userInput.disabled = v;
     }
 
-    async function fileToDataURL(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+    function formatBytes(bytes) {
+      if (!bytes || bytes <= 0) return "0KB";
+      if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
+      return `${Math.round(bytes / 1024)}KB`;
+    }
+
+    async function uploadToCloudinary(file) {
+      if (!file || !file.type || !file.type.startsWith("image/")) {
+        throw new Error("请选择图片文件");
+      }
+
+      const cloudName = CLOUDINARY_CONFIG.cloudName;
+      const uploadPreset = CLOUDINARY_CONFIG.uploadPreset;
+      if (!cloudName || !uploadPreset) {
+        throw new Error("Cloudinary配置缺失，请检查 cloudName / uploadPreset");
+      }
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("upload_preset", uploadPreset);
+      const url = `https://api.cloudinary.com/v1_1/${cloudName}/upload`;
+
+      const res = await fetch(url, { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error?.message || "Cloudinary上传失败");
+      }
+      return data.secure_url;
+    }
+
+    async function loadCloudinaryConfig() {
+      try {
+        const res = await fetch("/api/config");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.cloudName && data?.uploadPreset) {
+          CLOUDINARY_CONFIG = {
+            cloudName: data.cloudName,
+            uploadPreset: data.uploadPreset,
+          };
+        }
+      } catch {
+        // use local fallback values in CLOUDINARY_CONFIG
+      }
     }
 
     function refreshHints() {
       els.referenceHint.textContent = state.referenceImage
-        ? `参考图：${state.referenceImage.name}`
+        ? `参考图：${state.referenceImage.name} · ${state.referenceImage.sizeLabel} · 已上传`
         : "参考图：未上传";
       els.generatedHint.textContent = state.generatedImage
-        ? `生成图：${state.generatedImage.name}`
+        ? `生成图：${state.generatedImage.name} · ${state.generatedImage.sizeLabel} · 已上传`
         : "生成图：未上传（可仅文本测试）";
     }
 
@@ -672,8 +720,8 @@
       try {
         const payload = {
           userPrompt: text,
-          referenceImageDataUrl: state.referenceImage ? state.referenceImage.dataUrl : null,
-          generatedImageDataUrl: state.generatedImage ? state.generatedImage.dataUrl : null,
+          referenceImageUrl: state.referenceImage ? state.referenceImage.url : null,
+          generatedImageUrl: state.generatedImage ? state.generatedImage.url : null,
         };
 
         const res = await fetch("/api/analyze", {
@@ -755,21 +803,39 @@
     els.referenceFile.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      state.referenceImage = {
-        name: file.name,
-        dataUrl: await fileToDataURL(file),
-      };
-      refreshHints();
+      els.referenceHint.textContent = "参考图：上传中...";
+      try {
+        const imageUrl = await uploadToCloudinary(file);
+        state.referenceImage = {
+          name: file.name,
+          url: imageUrl,
+          sizeLabel: formatBytes(file.size),
+        };
+      } catch (err) {
+        alert(`参考图上传失败：${err.message || err}`);
+        state.referenceImage = null;
+      } finally {
+        refreshHints();
+      }
     });
 
     els.generatedFile.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      state.generatedImage = {
-        name: file.name,
-        dataUrl: await fileToDataURL(file),
-      };
-      refreshHints();
+      els.generatedHint.textContent = "生成图：上传中...";
+      try {
+        const imageUrl = await uploadToCloudinary(file);
+        state.generatedImage = {
+          name: file.name,
+          url: imageUrl,
+          sizeLabel: formatBytes(file.size),
+        };
+      } catch (err) {
+        alert(`生成图上传失败：${err.message || err}`);
+        state.generatedImage = null;
+      } finally {
+        refreshHints();
+      }
     });
 
     els.presetBtn.addEventListener("click", () => {
@@ -781,6 +847,7 @@
     renderSuggestions();
     refreshHints();
     updateEmptyState();
+    loadCloudinaryConfig();
   </script>
 </body>
 </html>
